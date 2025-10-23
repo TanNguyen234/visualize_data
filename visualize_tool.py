@@ -125,10 +125,8 @@ if uploaded_file:
             else:
 
                 # --- SỬA LỖI TÊN BIỂU ĐỒ DÀI VÀ THÔNG TIN BỘ LỌC ---
-                # Chỉ lấy tên biểu đồ chính, bỏ qua hậu tố
                 base_title = chart_choice_name.split(':')[0]
 
-                # Hiển thị thông tin lọc ở phần mô tả
                 st.subheader(f"Biểu đồ: {base_title}")
                 st.info(
                     f"Dữ liệu được lọc: {len(df_filtered)} điểm. (Ward: {', '.join(selected_wards)}, Tháng: {', '.join(map(str, selected_months))})")
@@ -143,11 +141,12 @@ if uploaded_file:
                 if chart_choice_key == "scatter_lst_ndvi":
                     fig = px.scatter(
                         df_filtered, x="NDVI", y="LST", color="WARD",
-                        title=f"1️⃣ {base_title} theo Ward",  # FIX: Rút gọn tiêu đề
+                        title=f"1️⃣ {base_title} theo Ward",
                         hover_data={'DATE': True, 'POINT_X': True, 'POINT_Y': True}
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                    plot_data = fig.to_image(format="png", scale=2)
+                    # FIX: Bỏ fig.to_image() để tránh lỗi Kaleido trên Streamlit Cloud
+                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
                 elif chart_choice_key == "boxplot_lst_ward":
                     lst_mean_filtered = df_filtered.groupby('WARD')['LST'].mean().sort_values(ascending=False).head(
@@ -159,26 +158,29 @@ if uploaded_file:
                     else:
                         fig = px.box(
                             df_sample, x="WARD", y="LST", color="WARD",
-                            title=f"2️⃣ Phân bố LST của 6 Ward có LST TB cao nhất",  # FIX: Rút gọn tiêu đề
+                            title=f"2️⃣ Phân bố LST của 6 Ward có LST TB cao nhất",
                             height=600
                         )
                         st.plotly_chart(fig, use_container_width=True)
-                        plot_data = fig.to_image(format="png", scale=2)
+                        # FIX: Bỏ fig.to_image()
+                        st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
                 elif chart_choice_key == "heatmap_corr":
                     corr = df_filtered[['LST', 'NDVI', 'TVDI']].corr()
                     fig = px.imshow(
                         corr, text_auto=True, aspect="auto",
                         color_continuous_scale='RdBu_r',
-                        title=f"3️⃣ Ma trận Tương quan LST, NDVI, TVDI"  # FIX: Rút gọn tiêu đề
+                        title=f"3️⃣ Ma trận Tương quan LST, NDVI, TVDI"
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                    plot_data = fig.to_image(format="png", scale=2)
+                    # FIX: Bỏ fig.to_image()
+                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
                 elif chart_choice_key == "combined_chart":
                     if avg_by_ward.empty:
                         st.warning("Không đủ dữ liệu trung bình để vẽ Combined Chart.")
                     else:
+                        # Biểu đồ Matplotlib (sử dụng st.download_button)
                         mpl_fig, ax1 = plt.subplots(figsize=(10, 6))
 
                         color_bar = '#3b82f6'
@@ -203,39 +205,42 @@ if uploaded_file:
                         lines1, labels1 = ax1.get_legend_handles_labels()
                         lines2, labels2 = ax2.get_legend_handles_labels()
                         ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-                        ax1.set_title(f"4️⃣ {base_title} theo Ward")  # FIX: Rút gọn tiêu đề
+                        ax1.set_title(f"4️⃣ {base_title} theo Ward")
 
                         plt.tight_layout()
                         st.pyplot(mpl_fig)
 
+                        # Xuất ảnh ra buffer để tải xuống
                         buf = io.BytesIO()
                         mpl_fig.savefig(buf, format="png", dpi=300)
                         plt.close(mpl_fig)
 
-                        plot_data = buf.getvalue()
+                        plot_data = buf.getvalue() # Chỉ gán plot_data cho Matplotlib
 
                 elif chart_choice_key == "regplot_lst_ndvi":
                     fig = px.scatter(
                         df_filtered, x="NDVI", y="LST",
                         trendline="ols", color="WARD",
-                        title=f"5️⃣ {base_title}: LST vs NDVI",  # FIX: Rút gọn tiêu đề
+                        title=f"5️⃣ {base_title}: LST vs NDVI",
                         hover_data={'DATE': True}
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                    plot_data = fig.to_image(format="png", scale=2)
+                    # FIX: Bỏ fig.to_image()
+                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
                 elif chart_choice_key == "scatter_tvdi_lst":
                     fig = px.scatter(
                         df_filtered, x="TVDI", y="LST", color="WARD",
-                        title=f"6️⃣ {base_title} theo Ward",  # FIX: Rút gọn tiêu đề
+                        title=f"6️⃣ {base_title} theo Ward",
                         hover_data={'DATE': True, 'POINT_X': True, 'POINT_Y': True}
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                    plot_data = fig.to_image(format="png", scale=2)
+                    # FIX: Bỏ fig.to_image()
+                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
-                # --- NÚT TẢI XUỐNG CHUNG ---
+                # --- NÚT TẢI XUỐNG CHUNG (CHỈ DÙNG CHO MATPLOTLIB) ---
                 if plot_data is not None:
-                    # Tên file vẫn giữ thông tin Ward và Tháng để dễ quản lý
+                    # Nút này chỉ xuất hiện khi Combined Chart (Matplotlib) được chọn
                     st.download_button(
                         label="📥 Tải xuống Biểu đồ (PNG)",
                         data=plot_data,
