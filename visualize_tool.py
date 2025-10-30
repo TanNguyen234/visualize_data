@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-import seaborn as sns
 import plotly.express as px
+import seaborn as sns
 import numpy as np
 import io
-import os
+from datetime import date, timedelta
 
 # --- 1. CẤU HÌNH TRANG VÀ TIÊU ĐỀ ---
 st.set_page_config(
@@ -14,17 +14,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("🌡️ Công cụ Trực quan hóa Dữ liệu Môi trường")
+st.title("Công cụ Trực quan hóa Dữ liệu Môi trường")
 st.markdown(
-    "Sử dụng **LST** (Land Surface Temperature), **NDVI** (Normalized Difference Vegetation Index) và **TVDI** (Temperature Vegetation Dryness Index) để phân tích.")
+    "Phân tích **LST** (Nhiệt độ bề mặt - °C), **NDVI** (Chỉ số thảm thực vật) và **TVDI** (Chỉ số khô hạn)."
+)
 
-
-# --- 2. TẢI VÀ XỬ LÝ DỮ LIỆU BAN ĐẦU ---
-
-# Hàm đọc và chuẩn hóa dữ liệu
+# --- 2. TẢI VÀ XỬ LÝ DỮ LIỆU ---
 @st.cache_data
 def load_and_preprocess_data(uploaded_file):
-    """Đọc, chuẩn hóa, và tính toán các giá trị trung bình."""
     try:
         if uploaded_file.name.endswith(('.xls', '.xlsx', '.xlsm')):
             df = pd.read_excel(uploaded_file)
@@ -35,222 +32,202 @@ def load_and_preprocess_data(uploaded_file):
             return None
 
         df.columns = df.columns.str.strip().str.upper()
-
         required_cols = ['POINT_X', 'POINT_Y', 'WARD', 'DATE', 'LST', 'NDVI', 'TVDI']
         if not all(col in df.columns for col in required_cols):
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            st.error(f"File thiếu các cột bắt buộc sau: {', '.join(missing_cols)}")
+            missing = [c for c in required_cols if c not in df.columns]
+            st.error(f"Thiếu cột bắt buộc: {', '.join(missing)}")
             return None
 
-        # Xử lý định dạng ngày tháng dd/mm/yyyy bằng dayfirst=True
         df['DATE'] = pd.to_datetime(df['DATE'], errors='coerce', dayfirst=True)
         df.dropna(subset=['DATE', 'LST', 'NDVI', 'TVDI', 'WARD'], inplace=True)
-
-        df['MONTH'] = df['DATE'].dt.month
-
         return df
-
     except Exception as e:
-        st.error(f"Lỗi khi xử lý file: {e}")
+        st.error(f"Lỗi xử lý file: {e}")
         return None
 
 
-# Hàm tạo tên file cho biểu đồ
-def generate_filename(chart_name, selected_wards, selected_months):
-    ward_str = "_".join(selected_wards)[:30].replace(' ', '-')
-    month_str = "_".join(map(str, selected_months))
-    chart_abbr = chart_name.split(':')[0].replace(' ', '_').replace('/', '').replace(',', '')
-    return f"{chart_abbr}_W{ward_str}_M{month_str}.png"
+# --- 3. HÀM TẠO TÊN FILE ---
+def generate_filename(chart_name, wards, start, end):
+    ward_count = len(wards)
+    if ward_count == len(st.session_state.all_wards):
+        ward_abbr = "ALL"
+    elif ward_count > 1:
+        ward_abbr = f"{wards[0]}..._{ward_count}W"
+    else:
+        ward_abbr = wards[0]
+    date_str = f"{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}"
+    chart_abbr = chart_name.split(':')[0].split(' ')[0]
+    return f"{chart_abbr}_{ward_abbr}_D{date_str}.png"
 
 
-# Nút tải file
+# --- 4. GIAO DIỆN NGƯỜI DÙNG ---
 uploaded_file = st.file_uploader(
-    "📤 **Bước 1: Tải file dữ liệu (.xlsm, .xlsx, .csv)**",
-    type=["xlsm", "xlsx", "csv"],
-    help="File phải có các cột: POINT_X, POINT_Y, WARD, DATE, LST, NDVI, TVDI. Định dạng ngày tháng phải là dd/mm/yyyy."
+    "📤 Bước 1: Tải file dữ liệu (.xlsm, .xlsx, .csv)",
+    type=["xlsm", "xlsx", "csv"]
 )
 
 if uploaded_file:
     df_raw = load_and_preprocess_data(uploaded_file)
-
     if df_raw is not None and not df_raw.empty:
-        st.success(f"Tải thành công! Tổng số dòng: {len(df_raw)}")
+        st.success(f"Đã tải {len(df_raw)} dòng dữ liệu.")
+        min_date, max_date = df_raw['DATE'].min().date(), df_raw['DATE'].max().date()
+        st.session_state.all_wards = sorted(df_raw['WARD'].unique())
 
-        # --- 3. BẢNG ĐIỀU KHIỂN (SIDEBAR) ---
+        # --- SIDEBAR ---
         st.sidebar.header("⚙️ Bộ lọc Dữ liệu")
+        st.sidebar.markdown("**Bước 2: Chọn Khoảng Ngày**")
 
-        all_months = sorted(df_raw['MONTH'].unique())
-        all_wards = sorted(df_raw['WARD'].unique())
-
-        selected_months = st.sidebar.multiselect(
-            "**Bước 2: Chọn Tháng**",
-            options=all_months,
-            default=all_months,
-            format_func=lambda x: f"Tháng {x}"
+        start_date = st.sidebar.date_input(
+            "Ngày Bắt đầu",
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date
+        )
+        end_date = st.sidebar.date_input(
+            "Ngày Kết thúc",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date
         )
 
+        if start_date > end_date:
+            st.sidebar.error("Ngày Bắt đầu phải nhỏ hơn hoặc bằng Ngày Kết thúc.")
+            start_date, end_date = end_date, start_date
+
+        # --- CHỌN PHƯỜNG CÓ NÚT XÓA ---
+        st.sidebar.markdown("**Bước 3: Chọn Phường (WARD)**")
+
+        # Nếu chưa có trong session_state, khởi tạo mặc định
+        if "selected_wards" not in st.session_state:
+            st.session_state.selected_wards = st.session_state.all_wards.copy()
+
+
+        # Hàm callback để reset danh sách chọn
+        def reset_wards():
+            if st.session_state.all_wards:
+                st.session_state.selected_wards = [st.session_state.all_wards[0]]
+
+
+        # Nút xóa hết — có key riêng để tránh trùng ID
+        st.sidebar.button("🧹 Xóa hết & Chọn lại 1 phường", key="clear_wards_btn", on_click=reset_wards)
+
+        # Widget multiselect — lấy dữ liệu từ session_state
         selected_wards = st.sidebar.multiselect(
-            "**Bước 3: Chọn Quận/Phường (WARD)**",
-            options=all_wards,
-            default=all_wards
+            "Chọn Phường hiển thị",
+            options=st.session_state.all_wards,
+            default=st.session_state.selected_wards,
+            key="selected_wards"
         )
 
         chart_options = {
             "Scatter: LST vs NDVI": "scatter_lst_ndvi",
-            "Boxplot: Phân bố LST theo Ward": "boxplot_lst_ward",
-            "Heatmap: Tương quan LST/NDVI/TVDI": "heatmap_corr",
-            "Combined: LST, NDVI, TVDI theo Ward (Bar & Line)": "combined_chart",
+            "Boxplot: Phân bố LST theo Phường": "boxplot_lst_ward",
+            "Combined: LST, NDVI, TVDI theo Phường": "combined_chart",
             "Linear Regression: LST vs NDVI": "regplot_lst_ndvi",
-            "Scatter: TVDI vs LST": "scatter_tvdi_lst"
+            "Scatter: TVDI vs LST": "scatter_tvdi_lst",
+            "Heatmap: LST trung bình theo Phường và Ngày": "heatmap_lst_ward_date",
+            "Pairplot: Tương quan đa biến": "pairplot_variables"
         }
 
-        st.sidebar.header("📊 Loại Biểu đồ")
-        chart_choice_name = st.sidebar.selectbox(
-            "**Bước 4: Chọn Biểu đồ để vẽ**",
-            options=list(chart_options.keys())
-        )
+        st.sidebar.header("📊 Loại biểu đồ")
+        chart_choice_name = st.sidebar.selectbox("Chọn loại biểu đồ", options=list(chart_options.keys()))
         chart_choice_key = chart_options[chart_choice_name]
 
-        # Nút vẽ biểu đồ
-        if st.sidebar.button("🎨 **Vẽ Biểu đồ**"):
-
-            # --- 4. ÁP DỤNG BỘ LỌC ---
+        # --- XỬ LÝ VẼ ---
+        if st.sidebar.button("Vẽ biểu đồ"):
             df_filtered = df_raw[
-                (df_raw['MONTH'].isin(selected_months)) &
-                (df_raw['WARD'].isin(selected_wards))
-                ]
+                (df_raw['DATE'] >= pd.to_datetime(start_date))
+                & (df_raw['DATE'] <= pd.to_datetime(end_date))
+                & (df_raw['WARD'].isin(selected_wards))
+            ]
 
             if df_filtered.empty:
-                st.error("Không có dữ liệu nào khớp với bộ lọc đã chọn.")
+                st.error("Không có dữ liệu khớp với bộ lọc.")
             else:
-
-                # --- SỬA LỖI TÊN BIỂU ĐỒ DÀI VÀ THÔNG TIN BỘ LỌC ---
-                base_title = chart_choice_name.split(':')[0]
-
-                st.subheader(f"Biểu đồ: {base_title}")
-                st.info(
-                    f"Dữ liệu được lọc: {len(df_filtered)} điểm. (Ward: {', '.join(selected_wards)}, Tháng: {', '.join(map(str, selected_months))})")
-
-                avg_by_ward = df_filtered.groupby('WARD')[['LST', 'NDVI', 'TVDI']].mean().reset_index()
-
-                # --- 5. VẼ BIỂU ĐỒ VÀ XỬ LÝ TẢI XUỐNG ---
+                st.subheader(f"Biểu đồ: {chart_choice_name}")
+                st.info(f"{len(df_filtered)} điểm dữ liệu, từ {start_date.strftime('%d/%m/%Y')} đến {end_date.strftime('%d/%m/%Y')}.")
 
                 plot_data = None
-                mime_type = "image/png"
 
+                # --- 1. SCATTER ---
                 if chart_choice_key == "scatter_lst_ndvi":
                     fig = px.scatter(
                         df_filtered, x="NDVI", y="LST", color="WARD",
-                        title=f"1️⃣ {base_title} theo Ward",
-                        hover_data={'DATE': True, 'POINT_X': True, 'POINT_Y': True}
+                        title="Quan hệ LST - NDVI theo Phường",
+                        labels={"NDVI": "NDVI", "LST": "LST (°C)"}
                     )
+                    fig.update_layout(font=dict(size=16))
                     st.plotly_chart(fig, use_container_width=True)
-                    # FIX: Bỏ fig.to_image() để tránh lỗi Kaleido trên Streamlit Cloud
-                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
+                # --- 2. BOX PLOT ---
                 elif chart_choice_key == "boxplot_lst_ward":
-                    lst_mean_filtered = df_filtered.groupby('WARD')['LST'].mean().sort_values(ascending=False).head(
-                        6).index
-                    df_sample = df_filtered[df_filtered['WARD'].isin(lst_mean_filtered)]
-
-                    if df_sample.empty:
-                        st.warning("Không đủ dữ liệu để vẽ Boxplot cho 6 Ward có LST cao nhất.")
-                    else:
-                        fig = px.box(
-                            df_sample, x="WARD", y="LST", color="WARD",
-                            title=f"2️⃣ Phân bố LST của 6 Ward có LST TB cao nhất",
-                            height=600
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                        # FIX: Bỏ fig.to_image()
-                        st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
-
-                elif chart_choice_key == "heatmap_corr":
-                    corr = df_filtered[['LST', 'NDVI', 'TVDI']].corr()
-                    fig = px.imshow(
-                        corr, text_auto=True, aspect="auto",
-                        color_continuous_scale='RdBu_r',
-                        title=f"3️⃣ Ma trận Tương quan LST, NDVI, TVDI"
+                    lst_top = df_filtered.groupby('WARD')['LST'].mean().sort_values(ascending=False).head(6).index
+                    df_sample = df_filtered[df_filtered['WARD'].isin(lst_top)]
+                    fig = px.box(
+                        df_sample, x="WARD", y="LST", color="WARD",
+                        title="Phân bố LST của 6 phường có nhiệt độ cao nhất",
+                        labels={"WARD": "Phường", "LST": "LST (°C)"}
                     )
+                    fig.update_layout(font=dict(size=16))
                     st.plotly_chart(fig, use_container_width=True)
-                    # FIX: Bỏ fig.to_image()
-                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
+                # --- 3. COMBINED ---
                 elif chart_choice_key == "combined_chart":
-                    if avg_by_ward.empty:
-                        st.warning("Không đủ dữ liệu trung bình để vẽ Combined Chart.")
-                    else:
-                        # Biểu đồ Matplotlib (sử dụng st.download_button)
-                        mpl_fig, ax1 = plt.subplots(figsize=(10, 6))
+                    avg_by_ward = df_filtered.groupby('WARD')[['LST', 'NDVI', 'TVDI']].mean().reset_index()
+                    fig, ax1 = plt.subplots(figsize=(10, 6))
+                    ax1.bar(avg_by_ward['WARD'], avg_by_ward['LST'], color='tab:blue', alpha=0.7, label='LST (°C)')
+                    ax1.set_xlabel("Phường")
+                    ax1.set_ylabel("LST (°C)", color='tab:blue')
+                    ax2 = ax1.twinx()
+                    ax2.plot(avg_by_ward['WARD'], avg_by_ward['NDVI'], color='tab:red', marker='o', label='NDVI')
+                    ax2.plot(avg_by_ward['WARD'], avg_by_ward['TVDI'], color='tab:green', marker='s', linestyle='--', label='TVDI')
+                    ax1.tick_params(axis='x', rotation=45)
+                    ax1.legend(loc='upper left')
+                    ax2.legend(loc='upper right')
+                    st.pyplot(fig)
 
-                        color_bar = '#3b82f6'
-                        color_line1 = '#ef4444'
-                        color_line2 = '#22c55e'
-
-                        ax1.bar(avg_by_ward['WARD'], avg_by_ward['LST'], color=color_bar, alpha=0.7,
-                                label='Mean LST (°C)')
-                        ax1.set_xlabel("Ward")
-                        ax1.set_ylabel("Mean LST (°C)", color=color_bar)
-                        ax1.tick_params(axis='y', labelcolor=color_bar)
-                        ax1.tick_params(axis='x', rotation=45)
-
-                        ax2 = ax1.twinx()
-                        ax2.plot(avg_by_ward['WARD'], avg_by_ward['NDVI'], color=color_line1, marker='o', linewidth=2,
-                                 label='Mean NDVI')
-                        ax2.plot(avg_by_ward['WARD'], avg_by_ward['TVDI'], color=color_line2, marker='s', linewidth=2,
-                                 linestyle='--', label='Mean TVDI')
-                        ax2.set_ylabel("NDVI / TVDI", color='black')
-                        ax2.tick_params(axis='y', labelcolor='black')
-
-                        lines1, labels1 = ax1.get_legend_handles_labels()
-                        lines2, labels2 = ax2.get_legend_handles_labels()
-                        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-                        ax1.set_title(f"4️⃣ {base_title} theo Ward")
-
-                        plt.tight_layout()
-                        st.pyplot(mpl_fig)
-
-                        # Xuất ảnh ra buffer để tải xuống
-                        buf = io.BytesIO()
-                        mpl_fig.savefig(buf, format="png", dpi=300)
-                        plt.close(mpl_fig)
-
-                        plot_data = buf.getvalue() # Chỉ gán plot_data cho Matplotlib
-
+                # --- 4. LINEAR REGRESSION ---
                 elif chart_choice_key == "regplot_lst_ndvi":
-                    fig = px.scatter(
-                        df_filtered, x="NDVI", y="LST",
-                        trendline="ols", color="WARD",
-                        title=f"5️⃣ {base_title}: LST vs NDVI",
-                        hover_data={'DATE': True}
+                    plt.figure(figsize=(8, 6))
+                    sns.kdeplot(
+                        data=df_filtered, x="NDVI", y="LST", fill=True, cmap="coolwarm", thresh=0.05, alpha=0.6
                     )
-                    st.plotly_chart(fig, use_container_width=True)
-                    # FIX: Bỏ fig.to_image()
-                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
+                    sns.regplot(
+                        data=df_filtered, x="NDVI", y="LST", scatter_kws={'alpha': 0.4, 's': 30}, line_kws={'color': 'black'}
+                    )
+                    plt.title("Quan hệ hồi quy giữa NDVI và LST", fontsize=16)
+                    plt.xlabel("NDVI")
+                    plt.ylabel("LST (°C)")
+                    st.pyplot(plt.gcf())
 
+                # --- 5. SCATTER TVDI - LST ---
                 elif chart_choice_key == "scatter_tvdi_lst":
                     fig = px.scatter(
                         df_filtered, x="TVDI", y="LST", color="WARD",
-                        title=f"6️⃣ {base_title} theo Ward",
-                        hover_data={'DATE': True, 'POINT_X': True, 'POINT_Y': True}
+                        title="TVDI vs LST theo Phường",
+                        labels={"TVDI": "TVDI", "LST": "LST (°C)"}
                     )
                     st.plotly_chart(fig, use_container_width=True)
-                    # FIX: Bỏ fig.to_image()
-                    st.markdown("**(💡 Di chuột lên góc trên phải biểu đồ để tải ảnh PNG)**")
 
-                # --- NÚT TẢI XUỐNG CHUNG (CHỈ DÙNG CHO MATPLOTLIB) ---
-                if plot_data is not None:
-                    # Nút này chỉ xuất hiện khi Combined Chart (Matplotlib) được chọn
-                    st.download_button(
-                        label="📥 Tải xuống Biểu đồ (PNG)",
-                        data=plot_data,
-                        file_name=generate_filename(chart_choice_name, selected_wards, selected_months),
-                        mime=mime_type
-                    )
+                # --- 6. HEATMAP ---
+                elif chart_choice_key == "heatmap_lst_ward_date":
+                    df_heat = df_filtered.copy()
+                    df_heat['DATE'] = df_heat['DATE'].dt.strftime('%Y-%m-%d')
+                    pivot = df_heat.pivot_table(values='LST', index='WARD', columns='DATE', aggfunc='mean')
+                    fig, ax = plt.subplots(figsize=(12, 6))
+                    sns.heatmap(pivot, cmap='coolwarm', cbar_kws={'label': 'LST (°C)'}, ax=ax)
+                    ax.set_title("Nhiệt độ bề mặt trung bình (LST) theo Phường và Ngày", fontsize=16)
+                    plt.xticks(rotation=45, ha='right')
+                    plt.tight_layout()
+                    st.pyplot(fig)
 
-
-    elif uploaded_file and (df_raw is None or df_raw.empty):
-        st.warning("Vui lòng tải lên một file hợp lệ và đảm bảo file không trống.")
-
+                # --- 7. PAIRPLOT ---
+                elif chart_choice_key == "pairplot_variables":
+                    df_pair = df_filtered[['LST', 'NDVI', 'TVDI', 'WARD']].copy()
+                    fig = sns.pairplot(df_pair, hue="WARD", diag_kind="kde", corner=True)
+                    fig.fig.suptitle("Mối tương quan đa biến (LST, NDVI, TVDI)", y=1.02, fontsize=16)
+                    st.pyplot(fig)
+    else:
+        st.warning("File không hợp lệ hoặc trống.")
 else:
-    st.info("💡 Bắt đầu bằng cách tải lên file dữ liệu (.xlsm, .xlsx, hoặc .csv) của bạn.")
+    st.info("💡 Hãy tải lên file dữ liệu (.xlsm, .xlsx, hoặc .csv).")
