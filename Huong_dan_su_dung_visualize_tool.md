@@ -44,7 +44,7 @@ source .venv/bin/activate  # macOS / Linux
 
 ### 3️⃣ Cài các thư viện cần thiết
 ```bash
-pip install streamlit pandas matplotlib seaborn plotly numpy openpyxl
+pip install streamlit pandas matplotlib seaborn plotly numpy openpyxl statsmodels kaleido
 ```
 
 ---
